@@ -1,0 +1,11 @@
+This is a simple tool to parse an ACPI PPTT into something a little
+more readable.  It will follow the links between elements for you.
+
+The tool started from the idea the on some systems, we would get very
+different info from /proc/cpuinfo, lscpu, ls-topo and even dmidecode.
+On ARM systems, because there is no equivalent to the x86 CPUID data,
+the PPTT is used.  So, I use this tool to look at a PPTT and then compare
+it to the info provided by the other sources when there is a discrepancy.
+
+Al Stone <ahs3@redhat.com>
+25 Jun 2020
