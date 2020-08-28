@@ -27,12 +27,15 @@
 #define BLANK_CHARS	"                                "
 #define BRANCH		"|-"
 
+#define VERSION		"v0.2"
+
 struct sub_list_entry {
 	struct acpi_subtable_header *table;
 	long offset;		/* displacement in bytes from start of PPTT */
 	long parent;		/* offset */
 	int level;
 	bool private;
+	bool referenced;	/* only used in analysis */
 	SIMPLEQ_ENTRY(sub_list_entry) list;
 };
 SIMPLEQ_HEAD(sub_list_head, sub_list_entry);
@@ -54,6 +57,8 @@ bool color = false;			/* use ANSI color highlighting */
 bool processor_tree = false;		/* show just the processor topology */
 bool cache_tree = false;		/* show just the cache topology */
 bool full_tree = false;			/* show the CPU/cache topology */
+bool analysis = false;			/* do some simple error checking */
+bool dumpit = false;			/* dump the raw tree */
 
 int cache_levels = 0;
 
@@ -66,14 +71,17 @@ char *subtype_names[ACPI_PPTT_TYPE_RESERVED + 1] = {
 
 void usage (char *cmd)
 {
+	fprintf(stderr, "topo %s: ", VERSION);
 	fprintf(stderr, "Report on the CPU/cache topology provided\n");
-	fprintf(stderr, "usage: %s [-Capcf] -t <pptt>\n", cmd);
+	fprintf(stderr, "usage: %s [-CapcfAV] -t <pptt>\n", cmd);
 	fprintf(stderr, "   where:\n", cmd);
 	fprintf(stderr, "      -C        => colorized output\n");
 	fprintf(stderr, "      -a        => print all topology reports\n");
 	fprintf(stderr, "      -p        => print processor-only topology\n");
 	fprintf(stderr, "      -c        => print cache-only topology\n");
 	fprintf(stderr, "      -f        => print full CPU/cache topology\n");
+	fprintf(stderr, "      -A        => do error checking\n");
+	fprintf(stderr, "      -V        => print version\n");
 	fprintf(stderr, "      -t <pptt> => binary form of ACPI PPTT to use\n");
 }
 
@@ -158,7 +166,7 @@ void print_cache(int level, struct sub_list_entry *sub, bool leaves)
 	currentl = cache_levels - level;
 	cachet = (ctp->attributes & CACHE_TYPE_MASK) >> 2;
 	cachet = cachet > 4 ? 4 : cachet;
-	level++;
+	//level++;
 	fprintf(stdout, "%*.s", level, BLANK_CHARS);
 	if (color)
 		fprintf(stdout, "%s%s%s L%d %c-cache:%s ",
@@ -166,7 +174,7 @@ void print_cache(int level, struct sub_list_entry *sub, bool leaves)
 			currentl, CACHE_TYPE[cachet],
 			ANSI_RESET);
 	else
-		fprintf(stdout, "%s L%d %c-cache: ",
+		fprintf(stdout, "%s L%d %c23204 E Piccolo Drive Aurora, CO 80016-cache: ",
 			BRANCH, currentl, CACHE_TYPE[cachet]);
 	fprintf(stdout, "%dKB, next level %d [offset %d]\n",
 		ctp->size/1024, ctp->next_level_of_cache, sub->offset);
@@ -178,30 +186,33 @@ void print_processor(int level, struct sub_list_entry *sub,
 	struct acpi_subtable_header *sp = sub->table;
 	struct acpi_pptt_processor *ptp = (struct acpi_pptt_processor *)sp;
 
-	if (color) {
-		if (level == 0) {
-			fprintf(stdout, "\n%s%sPackage:%s ",
-				ANSI_BOLD, ANSI_RED, ANSI_RESET);
+	if (leaves) {
+		if (color) {
+			if (level == 0) {
+				fprintf(stdout, "\n%s%sPackage:%s ",
+					ANSI_BOLD, ANSI_RED, ANSI_RESET);
+			} else {
+				fprintf(stdout, "%*.s", level, BLANK_CHARS);
+				fprintf(stdout, "%s%s%s processor:%s ",
+					ANSI_BOLD, ANSI_GREEN,
+					BRANCH, ANSI_RESET);
+			}
 		} else {
-			fprintf(stdout, "%*.s", level, BLANK_CHARS);
-			fprintf(stdout, "%s%s%s processor:%s ",
-				ANSI_BOLD, ANSI_GREEN,
-				BRANCH, ANSI_RESET);
+			if (level == 0) {
+				fprintf(stdout, "\nPackage: ");
+			} else {
+				fprintf(stdout, "%*.s", level, BLANK_CHARS);
+				fprintf(stdout, "%s processor: ", BRANCH);
+			}
 		}
-	} else {
-		if (level == 0) {
-			fprintf(stdout, "\nPackage: ");
-		} else {
-			fprintf(stdout, "%*.s", level, BLANK_CHARS);
-			fprintf(stdout, "%s processor: ", BRANCH);
-		}
-	}
 
-	fprintf(stdout, "0x%08x, %d resource%s",
-		ptp->acpi_processor_id,
-		ptp->number_of_priv_resources,
-		ptp->number_of_priv_resources > 1 ? "s" : "");
-	fprintf(stdout, ", parent %d, offset %d\n", ptp->parent, sub->offset);
+		fprintf(stdout, "0x%08x, %d resource%s",
+			ptp->acpi_processor_id,
+			ptp->number_of_priv_resources,
+			ptp->number_of_priv_resources > 1 ? "s" : "");
+		fprintf(stdout, ", parent %d, offset %d\n",
+			ptp->parent, sub->offset);
+	}
 
 	find_private_resources(level, sub, private, leaves);
 	find_children(level, sub->offset, private, sp->type, leaves);
@@ -329,8 +340,8 @@ int count_levels(struct sub_list_entry *sub, int deeper)
 void show_cache_tree(void)
 {
 	/*
-	 * Start with the root processor node(s), work out the levels,
-	 * and print them out
+	 * Start with the root CPU node(s), i.e., the physical packages,
+	 * and show just caches
 	 */
 	int level;
 	struct sub_list_entry *sub;
@@ -339,7 +350,6 @@ void show_cache_tree(void)
 	bool leaves = false;
 
 	print_header("Cache Topology");
-
 	level = 0;
 	SIMPLEQ_FOREACH(sub, &sublist, list) {
 		switch (sub->table->type) {
@@ -400,7 +410,6 @@ void show_full_tree(void)
 	int level;
 	struct sub_list_entry *sub;
 	struct acpi_pptt_processor *ptp;
-	struct acpi_pptt_cache *ctp;
 	bool private = true;
 	bool leaves = true;
 
@@ -414,9 +423,7 @@ void show_full_tree(void)
 				print_processor(level, sub, private, leaves);
 			break;
 		case ACPI_PPTT_TYPE_CACHE:
-			ctp = (struct acpi_pptt_cache *)(sub->table);
-			if (ctp->next_level_of_cache == 0)
-				print_cache(level, sub, leaves);
+			/* nothing to do here */
 			break;
 		case ACPI_PPTT_TYPE_ID:
 			print_id(sub);
@@ -675,6 +682,147 @@ void build_tree(unsigned char *pptt, int plen)
 	dump_tree(root);
 }
 
+void error_check(bool doprint)
+{
+	/* traverse the list and see of there are unreferenced nodes */
+	struct sub_list_entry *sub;
+	struct sub_list_entry *ptr;
+	struct acpi_pptt_cache *ctp;
+
+	SIMPLEQ_FOREACH(sub, &sublist, list) {
+		switch (sub->table->type) {
+		case ACPI_PPTT_TYPE_PROCESSOR:
+			SIMPLEQ_FOREACH(ptr, &sublist, list) {
+				if (ptr->parent == sub->offset)
+					ptr->referenced = true;
+			}
+			break;
+		case ACPI_PPTT_TYPE_CACHE:
+			SIMPLEQ_FOREACH(ptr, &sublist, list) {
+				ctp = (struct acpi_pptt_cache *)(ptr->table);
+				if (sub->offset == ctp->next_level_of_cache)
+					ptr->referenced = true;
+			}
+			break;
+		case ACPI_PPTT_TYPE_ID:
+			break;
+		}
+
+		if (sub->parent) {
+			SIMPLEQ_FOREACH(ptr, &sublist, list) {
+				if (ptr->offset == sub->parent)
+					ptr->referenced = true;
+			}
+		}
+	}
+
+	if (doprint) {
+		SIMPLEQ_FOREACH(sub, &sublist, list) {
+			if (!sub->referenced)
+				fprintf(stdout,
+				     "node@0x%08x not referenced, type = %s\n",
+				     sub->offset,
+				     subtype_str(sub->table->type));
+		}
+	}
+}
+
+void dump_list(void)
+{
+	/* traverse the list and see of there are unreferenced nodes */
+	struct sub_list_entry *sub;
+	struct acpi_pptt_processor *ptp;
+	struct acpi_pptt_cache *ctp;
+	struct acpi_pptt_id *itp;
+	int ii;
+	u32 *ptr;
+
+	SIMPLEQ_FOREACH(sub, &sublist, list) {
+		fprintf(stdout,"list node@%p\n", sub);
+		fprintf(stdout,"   table@%p\n", sub->table);
+		fprintf(stdout,"   offset: %p (%ld)\n",
+			sub->offset, sub->offset);
+		fprintf(stdout,"   parent (offset): %p (%ld)\n",
+			sub->parent, sub->parent);
+		fprintf(stdout,"   level: %d\n", sub->level);
+		fprintf(stdout,"   private: %s\n",
+			sub->private ? "true" : "false");
+		fprintf(stdout,"   referenced: %s\n",
+			sub->referenced ? "true" : "false");
+
+		switch (sub->table->type) {
+		case ACPI_PPTT_TYPE_PROCESSOR:
+			ptp = (struct acpi_pptt_processor *)(sub->table);
+			fprintf(stdout, "   processor subtable:\n");
+			fprintf(stdout, "      type: %d\n", ptp->header.type);
+			fprintf(stdout, "      length: %d\n",
+				ptp->header.length);
+			fprintf(stdout, "      reserved: 0x%04x\n",
+				ptp->reserved);
+			fprintf(stdout, "      flags: 0x%08x\n",
+				ptp->flags);
+			fprintf(stdout, "      parent: 0x%08x\n",
+				ptp->parent);
+			fprintf(stdout, "      processor id: 0x%08x\n",
+				ptp->acpi_processor_id);
+			fprintf(stdout, "      number private resources: %d\n",
+				ptp->number_of_priv_resources);
+			ptr = (u32 *)
+				(&ptp->number_of_priv_resources + sizeof(u32));
+			for (ii = 0; ii < ptp->number_of_priv_resources; ii++) {
+				fprintf(stdout, "         resource: 0x%08x\n",
+					*ptr);
+				ptr++;
+			}
+			break;
+
+		case ACPI_PPTT_TYPE_CACHE:
+			ctp = (struct acpi_pptt_cache *)(sub->table);
+			fprintf(stdout, "   cache subtable:\n");
+			fprintf(stdout, "      type: %d\n", ctp->header.type);
+			fprintf(stdout, "      length: %d\n",
+				ctp->header.length);
+			fprintf(stdout, "      reserved: 0x%04x\n",
+				ctp->reserved);
+			fprintf(stdout, "      flags: 0x%08x\n",
+				ctp->flags);
+			fprintf(stdout, "      next level of cache: 0x%08x\n",
+				ctp->next_level_of_cache);
+			fprintf(stdout, "      size: %d\n", ctp->size);
+			fprintf(stdout, "      number of sets: %d\n",
+				ctp->number_of_sets);
+			fprintf(stdout, "      associativity: %d\n",
+				ctp->associativity);
+			fprintf(stdout, "      attributes: %d\n",
+				ctp->attributes);
+			fprintf(stdout, "      line size: %d\n",
+				ctp->line_size);
+			break;
+
+		case ACPI_PPTT_TYPE_ID:
+			itp = (struct acpi_pptt_id *)(sub->table);
+			fprintf(stdout, "   id subtable:\n");
+			fprintf(stdout, "      type: %d\n", itp->header.type);
+			fprintf(stdout, "      length: %d\n",
+				itp->header.length);
+			fprintf(stdout, "      reserved: 0x%04x\n",
+				itp->reserved);
+			fprintf(stdout, "      vendor id: 0x%08x\n",
+				itp->vendor_id);
+			fprintf(stdout, "      level1 id: 0x%016x\n",
+				itp->level1_id);
+			fprintf(stdout, "      level2 id: 0x%016x\n",
+				itp->level2_id);
+			fprintf(stdout, "      major rev: %d\n",
+				itp->major_rev);
+			fprintf(stdout, "      minor rev: %d\n",
+				itp->minor_rev);
+			fprintf(stdout, "      spin rev: %d\n", itp->spin_rev);
+			break;
+		}
+	}
+}
+
 int main (int argc, char *argv[])
 {
 	unsigned char *pptt;
@@ -687,7 +835,7 @@ int main (int argc, char *argv[])
 	struct sub_list_entry *sub;
 
 	/* process our arguments */
-	while ((opt = getopt(argc, argv, "aCpcft:")) != -1) {
+	while ((opt = getopt(argc, argv, "aCpcfADVt:")) != -1) {
 		switch(opt) {
 		case 'C':	/* use color */
 			color = true;
@@ -706,8 +854,18 @@ int main (int argc, char *argv[])
 			cache_tree = true;
 			full_tree = true;
 			break;
+		case 'A':	/* do error checking */
+			analysis = true;
+			break;
 		case 't':
 			ppttname = (char *)optarg;
+			break;
+		case 'D':	/* dump tree */
+			dumpit = true;
+			break;
+		case 'V':	/* print version tree */
+			fprintf(stdout, "topo %s\n ", VERSION);
+			exit (0);
 			break;
 		default:
 			usage(argv[0]);
@@ -785,4 +943,12 @@ int main (int argc, char *argv[])
 
 	if (cache_tree)
 		show_cache_tree();
+
+	if (analysis)
+		error_check(true);
+
+	if (dumpit) {
+		error_check(false);
+		dump_list();
+	}
 }
