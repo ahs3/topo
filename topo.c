@@ -42,7 +42,7 @@
 #define BLANK_CHARS	"                                "
 #define BRANCH		"|-"
 
-#define VERSION		"v0.2"
+#define VERSION		"v0.3"
 
 struct sub_list_entry {
 	struct acpi_subtable_header *table;
