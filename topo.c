@@ -42,7 +42,7 @@
 #define BLANK_CHARS	"                                "
 #define BRANCH		"|-"
 
-#define VERSION		"v0.3"
+#define VERSION		"v0.4"
 
 struct sub_list_entry {
 	struct acpi_subtable_header *table;
@@ -189,7 +189,7 @@ void print_cache(int level, struct sub_list_entry *sub, bool leaves)
 			currentl, CACHE_TYPE[cachet],
 			ANSI_RESET);
 	else
-		fprintf(stdout, "%s L%d %c23204 E Piccolo Drive Aurora, CO 80016-cache: ",
+		fprintf(stdout, "%s L%d %c-cache: ",
 			BRANCH, currentl, CACHE_TYPE[cachet]);
 	fprintf(stdout, "%dKB, next level %d [offset %d]\n",
 		ctp->size/1024, ctp->next_level_of_cache, sub->offset);
