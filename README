@@ -7,5 +7,10 @@ On ARM systems, because there is no equivalent to the x86 CPUID data,
 the PPTT is used.  So, I use this tool to look at a PPTT and then compare
 it to the info provided by the other sources when there is a discrepancy.
 
-Al Stone <ahs3@redhat.com>
+Everything here is distributed under the GPLv2 license.
+
+Everything under the acpi/ directory is distributed under the GPLv2, but
+comes from the acpica.org project.
+
+Al Stone <ahs3@ahs3.net>
 25 Jun 2020
